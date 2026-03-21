@@ -21,6 +21,10 @@ frontend/.env
 frontend/.env.local
 frontend/.env.*.local
 
+# frames and docs
+ui_frames
+ui_frames2
+
 # Misc
 .DS_Store
 Thumbs.db
