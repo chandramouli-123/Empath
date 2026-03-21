@@ -24,6 +24,10 @@ frontend/.env.*.local
 # frames and docs
 ui_frames
 ui_frames2
+docs
+EMPATH_DOC3_DEVELOPERS_BIBLE.md
+EMPATH_DOC2_JURY_PITCH.md
+EMPATH_DOC1_UNDERSTANDING.md
 
 # Misc
 .DS_Store
