@@ -49,6 +49,13 @@ def _get_session_state(session_id: str) -> dict:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global models_ready
+    skip_models = os.environ.get("SKIP_MODELS", "").strip().lower() in ("1", "true", "yes", "on")
+    if skip_models:
+        print("SKIP_MODELS enabled — skipping heavy ML model loading for fast startup.")
+        models_ready = True
+        yield
+        return
+
     print("Loading facial emotion model...")
     try:
         emotion_model.load_model()

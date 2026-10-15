@@ -44,8 +44,10 @@ _pending_emotion = None
 _pending_emotion_count = 0
 _behavior_pending = None
 _behavior_pending_count = 0
-_face_detector = cv2.CascadeClassifier(
-    cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+_face_detector = (
+    cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+    if hasattr(cv2, "CascadeClassifier") and hasattr(cv2, "data")
+    else None
 )
 _face_mesh = (
     mp.solutions.face_mesh.FaceMesh(
@@ -72,6 +74,8 @@ def _center_crop(image: Image.Image) -> Image.Image:
 
 def _find_face(image: Image.Image) -> tuple[int, int, int, int] | None:
     """Find the largest frontal face using a lightweight local detector."""
+    if _face_detector is None:
+        return None
     gray = cv2.cvtColor(np.asarray(image), cv2.COLOR_RGB2GRAY)
     faces = _face_detector.detectMultiScale(
         gray,

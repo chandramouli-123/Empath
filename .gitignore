@@ -36,6 +36,11 @@ Thumbs.db
 *.mp4
 *.avi
 *.mov
+*.db
+*.sqlite
+*.sqlite3
+*.pdf
+rep.md
 
 # IDE
 .vscode/settings.json
