@@ -84,6 +84,3 @@ empath/
 └── docs/              # Design docs & plans
 ```
 
-## Author
-
-Built by **Nithish** for BIS Standards Hackathon 2026.
