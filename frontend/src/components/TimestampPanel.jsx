@@ -1,11 +1,11 @@
 import { motion } from 'framer-motion'
 
 const EMOTION_COLORS = {
-    focused: '#4ADE80', confused: '#FB923C',
+    focused: '#4ADE80', neutral: '#60A5FA', confused: '#FB923C',
     bored: '#F472B6', distressed: '#F87171', distracted: '#A78BFA',
 }
 const EMOTION_EMOJI = {
-    focused: '😊', confused: '🤔', bored: '😴', distressed: '😟', distracted: '🫠'
+    focused: '😊', neutral: '😐', confused: '🤔', bored: '😴', distressed: '😟', distracted: '🫠'
 }
 
 function formatTime(s) {
@@ -14,7 +14,7 @@ function formatTime(s) {
     return `${m}:${sec.toString().padStart(2, '0')}`
 }
 
-export default function TimestampPanel({ elapsedSeconds, videoTime, emotion, seqiScore, seqiComponents, trendSlope, suggestion, eventLog }) {
+export default function TimestampPanel({ elapsedSeconds, videoTime, emotion, seqiScore, seqiComponents, trendSlope, suggestion, eventLog, manualEmotion, onSetManualEmotion }) {
     const color = EMOTION_COLORS[emotion] || '#888'
 
     return (
@@ -48,12 +48,58 @@ export default function TimestampPanel({ elapsedSeconds, videoTime, emotion, seq
                     <span className="text-white font-bold text-lg">{seqiScore}</span>
                 </div>
 
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between mb-3">
                     <span className="text-gray-400 text-xs">Trend</span>
                     <span className={`text-sm font-bold ${trendSlope > 1 ? 'text-green-400' : trendSlope < -1 ? 'text-red-400' : 'text-gray-400'}`}>
                         {trendSlope > 1 ? '↑ Improving' : trendSlope < -1 ? '↓ Declining' : '→ Stable'}
                     </span>
                 </div>
+
+                {/* Demo Simulation Controls */}
+                {onSetManualEmotion && (
+                    <div className="pt-2 border-t border-gray-800">
+                        <div className="flex items-center justify-between mb-1.5">
+                            <span className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">Demo Controls</span>
+                            {manualEmotion && (
+                                <button
+                                    onClick={() => onSetManualEmotion(null)}
+                                    className="text-[10px] text-green-400 hover:underline cursor-pointer"
+                                >
+                                    Reset to Auto AI
+                                </button>
+                            )}
+                        </div>
+                        <div className="grid grid-cols-3 gap-1">
+                            {[
+                                { id: 'focused', label: '😊 Focus', color: '#4ADE80' },
+                                { id: 'neutral', label: '😐 Neutral', color: '#60A5FA' },
+                                { id: 'confused', label: '🤔 Confused', color: '#FB923C' },
+                                { id: 'bored', label: '😴 Bored', color: '#F472B6' },
+                                { id: 'distressed', label: '😟 Distress', color: '#F87171' },
+                                { id: null, label: '📷 Auto AI', color: '#A78BFA' },
+                            ].map(btn => {
+                                const isSelected = manualEmotion === btn.id || (!manualEmotion && btn.id === null)
+                                return (
+                                    <button
+                                        key={btn.id || 'auto'}
+                                        onClick={() => onSetManualEmotion(btn.id)}
+                                        className={`text-[11px] py-1 px-1 rounded-md border text-center transition-all cursor-pointer ${
+                                            isSelected
+                                                ? 'bg-white/10 font-bold'
+                                                : 'border-gray-800 text-gray-400 hover:text-white hover:bg-white/5'
+                                        }`}
+                                        style={{
+                                            borderColor: isSelected ? btn.color : undefined,
+                                            color: isSelected ? btn.color : undefined
+                                        }}
+                                    >
+                                        {btn.label}
+                                    </button>
+                                )
+                            })}
+                        </div>
+                    </div>
+                )}
             </div>
 
             {/* SEQI Components */}

@@ -9,13 +9,13 @@ import TimestampPanel from '../components/TimestampPanel'
 import VideoInfoPanel from '../components/VideoInfoPanel'
 import { analyzeEmotion, computeScore, getSuggestion, sendBehaviorEvent, sendTabSwitch, endSession, getVideoInfo } from '../api'
 
-// 5 emotion classes: focused, confused, bored, distressed, distracted
+// 6 emotion classes: focused, neutral, confused, bored, distressed, distracted
 const EMOTION_COLORS = {
-  focused: '#4ADE80', confused: '#FB923C',
+  focused: '#4ADE80', neutral: '#60A5FA', confused: '#FB923C',
   bored: '#F472B6', distressed: '#F87171', distracted: '#A78BFA',
 }
 const EMOTION_EMOJI = {
-  focused: '😊', confused: '🤔', bored: '😴', distressed: '😟', distracted: '🫠'
+  focused: '😊', neutral: '😐', confused: '🤔', bored: '😴', distressed: '😟', distracted: '🫠'
 }
 
 function SEQIChartSection({ chartData, emotion }) {
@@ -56,6 +56,26 @@ export default function SessionPage() {
   const { videoRef, canvasRef, hasPermission, requestPermission, captureFrame, stopStream } = useWebcam()
 
   const [emotion, setEmotion] = useState('focused')
+  const [manualEmotion, setManualEmotion] = useState(null)
+  const manualEmotionRef = useRef(null)
+
+  function handleSetManualEmotion(emo) {
+    setManualEmotion(emo)
+    manualEmotionRef.current = emo
+    if (emo) {
+      setEmotion(emo)
+      if (sessionId) {
+        computeScore(sessionId, emo, 0.95, recentEventsRef.current, elapsedRef.current, false, [])
+          .then(res => {
+            setSeqiScore(res.seqi_score || res.focus_score)
+            setSeqiComponents({ be: res.be, es: res.es, id: res.id, rr: res.rr })
+            setTrendSlope(res.trend_slope || 0)
+          })
+          .catch(() => {})
+      }
+    }
+  }
+
   const [seqiScore, setSeqiScore] = useState(70)
   const [seqiComponents, setSeqiComponents] = useState({ be: 70, es: 80, id: 50, rr: 80 })
   const [trendSlope, setTrendSlope] = useState(0)
@@ -80,6 +100,7 @@ export default function SessionPage() {
   const idleFiredRef = useRef(false)
   const behavioralSummaryRef = useRef({})
   const videoTimeRef = useRef(0)
+  const isAnalyzingRef = useRef(false)
 
   // Determine suggestion sensitivity from feedback
   const sensitivityRef = useRef(feedbackAdjustments?.suggestion_sensitivity || 1.0)
@@ -180,13 +201,14 @@ export default function SessionPage() {
   }
 
   async function analyzeFrame() {
-    if (!sessionId) return
-    const blob = await captureFrame()
-    if (!blob) return
-
-    const ts = elapsedRef.current
+    if (!sessionId || isEndingRef.current || isAnalyzingRef.current) return
+    isAnalyzingRef.current = true
 
     try {
+      const blob = await captureFrame()
+      if (!blob) return
+
+      const ts = elapsedRef.current
       const emotionResult = await analyzeEmotion(blob)
       const detectedEmotion = emotionResult.emotion
       const detectedConf = emotionResult.confidence
@@ -250,6 +272,8 @@ export default function SessionPage() {
       }
     } catch (err) {
       console.error('analyze error:', err)
+    } finally {
+      isAnalyzingRef.current = false
     }
   }
 
@@ -422,6 +446,8 @@ export default function SessionPage() {
           trendSlope={trendSlope}
           suggestion={suggestion}
           eventLog={eventLog}
+          manualEmotion={manualEmotion}
+          onSetManualEmotion={handleSetManualEmotion}
         />
       </div>
 

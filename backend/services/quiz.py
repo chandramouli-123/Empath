@@ -200,23 +200,109 @@ Format:
     questions = _parse_mcq_response(raw)
 
     if not questions:
-        # Hard fallback
-        return [
-            {
-                "question": f"Which of the following best describes a key concept in {topic}?",
-                "type": "conceptual",
-                "options": {"A": "It is a simple process", "B": "It involves multiple interacting components", "C": "It has no practical applications", "D": "It was invented recently"},
-                "correct": "B",
-                "index": 0
-            },
-            {
-                "question": f"What is the primary purpose of studying {topic}?",
-                "type": "conceptual",
-                "options": {"A": "Entertainment", "B": "Understanding underlying principles", "C": "Memorizing formulas", "D": "Avoiding real-world problems"},
-                "correct": "B",
-                "index": 1
-            },
-        ]
+        t_lower = (topic or "").lower()
+        if any(k in t_lower for k in ["learn", "ai", "model", "neural", "deep", "data", "vision", "general"]):
+            return [
+                {
+                    "question": f"In {topic}, what is the primary role of an objective/loss function during model training?",
+                    "type": "conceptual",
+                    "options": {
+                        "A": "To increase the dataset size indefinitely",
+                        "B": "To quantify prediction error and guide gradient updates",
+                        "C": "To eliminate the need for validation testing",
+                        "D": "To force all parameter weights to equal zero"
+                    },
+                    "correct": "B",
+                    "index": 0
+                },
+                {
+                    "question": f"When evaluating a system in {topic}, what is the definition of 'overfitting'?",
+                    "type": "conceptual",
+                    "options": {
+                        "A": "High training accuracy but poor generalization to unseen test data",
+                        "B": "The model having too few parameters to fit the data",
+                        "C": "Convergence within a single training iteration",
+                        "D": "Learning rate set below 0.001"
+                    },
+                    "correct": "A",
+                    "index": 1
+                },
+                {
+                    "question": f"Which strategy is most effective for mitigating overfitting in {topic}?",
+                    "type": "conceptual",
+                    "options": {
+                        "A": "Discarding validation checkpoints",
+                        "B": "Regularization, dropout, and early stopping",
+                        "C": "Expanding model depth without cross-validation",
+                        "D": "Using unlabelled training samples exclusively"
+                    },
+                    "correct": "B",
+                    "index": 2
+                },
+                {
+                    "question": f"Applied Scenario: Your {topic} model scores 98% accuracy on training data but drops to 62% on test data. What should you do next?",
+                    "type": "applied",
+                    "options": {
+                        "A": "Deploy directly to production",
+                        "B": "Introduce regularization, data augmentation, or collect more diverse training data",
+                        "C": "Delete the test evaluation dataset",
+                        "D": "Increase model capacity tenfold without regularization"
+                    },
+                    "correct": "B",
+                    "index": 3
+                }
+            ]
+        else:
+            return [
+                {
+                    "question": f"Which foundational principle is most critical when studying {topic}?",
+                    "type": "conceptual",
+                    "options": {
+                        "A": "Relying on arbitrary assumptions without systematic analysis",
+                        "B": "Understanding core concepts, mechanisms, and cause-and-effect relationships",
+                        "C": "Skipping empirical verification entirely",
+                        "D": "Memorizing without practical application"
+                    },
+                    "correct": "B",
+                    "index": 0
+                },
+                {
+                    "question": f"What is the most effective approach for retaining key ideas in {topic}?",
+                    "type": "conceptual",
+                    "options": {
+                        "A": "Active recall and structured problem-solving",
+                        "B": "Passive reading without reflection",
+                        "C": "Speeding through without pausing for comprehension",
+                        "D": "Ignoring foundational prerequisites"
+                    },
+                    "correct": "A",
+                    "index": 1
+                },
+                {
+                    "question": f"In {topic}, how should complex problems be broken down?",
+                    "type": "conceptual",
+                    "options": {
+                        "A": "Attempting all subproblems simultaneously without modularity",
+                        "B": "Decomposing into smaller, testable sub-components",
+                        "C": "Guessing solutions without diagnostic metrics",
+                        "D": "Disregarding feedback loops"
+                    },
+                    "correct": "B",
+                    "index": 2
+                },
+                {
+                    "question": f"Applied Scenario: You encounter a roadblock while applying concepts in {topic}. What is the optimal diagnostic step?",
+                    "type": "applied",
+                    "options": {
+                        "A": "Abandon the topic immediately",
+                        "B": "Isolate the problematic step, review the principle, and test with minimal examples",
+                        "C": "Change all parameters randomly at once",
+                        "D": "Ignore error signals"
+                    },
+                    "correct": "B",
+                    "index": 3
+                }
+            ]
 
     for i, q in enumerate(questions):
         q["index"] = i

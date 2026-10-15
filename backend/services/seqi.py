@@ -27,6 +27,7 @@ SEQI_THRESHOLDS = [
 # Emotion class values for stability calculation
 EMOTION_VALUES = {
     "focused": 4,
+    "neutral": 3,
     "confused": 2,
     "bored": 1,
     "distressed": 0,

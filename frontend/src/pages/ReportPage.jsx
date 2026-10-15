@@ -8,12 +8,12 @@ import EngagementHeatmap from '../components/EngagementHeatmap'
 import SEQIBreakdown from '../components/SEQIBreakdown'
 
 const EMOTION_COLORS = {
-  focused: '#4ADE80', confused: '#FB923C',
+  focused: '#4ADE80', neutral: '#60A5FA', confused: '#FB923C',
   bored: '#F472B6', distressed: '#F87171', distracted: '#A78BFA',
 }
 
 const EMOTION_BG = {
-  focused: '#DCFCE7', confused: '#FFEDD5',
+  focused: '#DCFCE7', neutral: '#DBEAFE', confused: '#FFEDD5',
   bored: '#FCE7F3', distressed: '#FEF2F2', distracted: '#EDE9FE',
 }
 

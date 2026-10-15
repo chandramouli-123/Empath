@@ -3,53 +3,100 @@ import { useRef, useState, useCallback, useEffect } from 'react'
 export function useWebcam() {
   const videoRef = useRef(null)
   const canvasRef = useRef(null)
+  const streamRef = useRef(null)
   const [hasPermission, setHasPermission] = useState(null) // null=unknown, true, false
   const [stream, setStream] = useState(null)
 
-  async function requestPermission() {
+  const attachStreamToVideo = useCallback((mediaStream) => {
+    if (videoRef.current && mediaStream) {
+      if (videoRef.current.srcObject !== mediaStream) {
+        videoRef.current.srcObject = mediaStream
+      }
+      videoRef.current.play().catch(() => {
+        // Browser autoplay policy might require user gesture or muted
+      })
+    }
+  }, [])
+
+  const requestPermission = useCallback(async () => {
+    // If stream is already active and live, reuse it
+    if (streamRef.current && streamRef.current.getVideoTracks().some(t => t.readyState === 'live')) {
+      setHasPermission(true)
+      attachStreamToVideo(streamRef.current)
+      return
+    }
+
     try {
       const s = await navigator.mediaDevices.getUserMedia({
-        video: { width: 224, height: 224, facingMode: 'user' }
+        video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' },
+        audio: false
       })
+      streamRef.current = s
       setStream(s)
       setHasPermission(true)
-    } catch {
+      attachStreamToVideo(s)
+    } catch (err) {
+      console.error('getUserMedia permission error:', err)
       setHasPermission(false)
     }
-  }
+  }, [attachStreamToVideo])
 
-  // Sync stream to video element after render (fixes timing race)
+  // Sync stream to video element when either changes
   useEffect(() => {
-    if (stream && videoRef.current) {
-      videoRef.current.srcObject = stream
+    if (streamRef.current && videoRef.current) {
+      attachStreamToVideo(streamRef.current)
     }
-  }, [stream, hasPermission])
+  }, [hasPermission, stream, attachStreamToVideo])
 
-  function stopStream() {
-    if (stream) {
-      stream.getTracks().forEach(t => t.stop())
+  const stopStream = useCallback(() => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(t => t.stop())
+      streamRef.current = null
       setStream(null)
     }
-  }
+  }, [])
 
   // Returns a Promise<Blob|null> — captured JPEG frame
   const captureFrame = useCallback(() => {
     return new Promise((resolve) => {
       const video = videoRef.current
       const canvas = canvasRef.current
-      if (!video || !canvas || !stream) return resolve(null)
-      const ctx = canvas.getContext('2d')
-      canvas.width = 224
-      canvas.height = 224
-      ctx.drawImage(video, 0, 0, 224, 224)
-      canvas.toBlob((blob) => resolve(blob), 'image/jpeg', 0.7)
-    })
-  }, [stream])
+      const currentStream = streamRef.current
 
-  // Cleanup on unmount
+      if (!video || !canvas || !currentStream) return resolve(null)
+      // Ensure video is actively playing and has dimensions
+      if (video.readyState < 2 || !video.videoWidth || !video.videoHeight) {
+        return resolve(null)
+      }
+
+      try {
+        const ctx = canvas.getContext('2d')
+        const vw = video.videoWidth
+        const vh = video.videoHeight
+        const minDim = Math.min(vw, vh)
+        const sx = (vw - minDim) / 2
+        const sy = (vh - minDim) / 2
+
+        canvas.width = 224
+        canvas.height = 224
+        ctx.drawImage(video, sx, sy, minDim, minDim, 0, 0, 224, 224)
+        canvas.toBlob((blob) => resolve(blob), 'image/jpeg', 0.8)
+      } catch (err) {
+        console.error('captureFrame error:', err)
+        resolve(null)
+      }
+    })
+  }, [])
+
+  // Cleanup tracks ONLY when component truly unmounts
   useEffect(() => {
-    return () => stopStream()
-  }, [stream])
+    return () => {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(t => t.stop())
+        streamRef.current = null
+      }
+    }
+  }, [])
 
   return { videoRef, canvasRef, hasPermission, stream, requestPermission, captureFrame, stopStream }
 }

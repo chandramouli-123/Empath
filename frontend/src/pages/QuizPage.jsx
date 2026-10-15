@@ -98,10 +98,10 @@ export default function QuizPage() {
                         <div className="text-6xl mb-6">📝</div>
                         <h2 className="text-2xl font-bold text-primary mb-3">Ready for a quiz?</h2>
                         <p className="text-secondary text-sm mb-4 max-w-md mx-auto">
-                            4 multiple-choice questions generated from the video transcript using Ollama AI.
+                            4 multiple-choice questions (3 conceptual + 1 applied scenario) tailored to your learning session.
                         </p>
                         <p className="text-xs text-gray-400 mb-8">
-                            Requires Ollama running locally with a Llama model
+                            AI-powered assessment with instant grading and explanations
                         </p>
                         <div className="flex justify-center gap-4">
                             <button onClick={handleStart} className="btn-black px-8 py-3">Generate Quiz →</button>

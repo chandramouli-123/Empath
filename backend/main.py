@@ -30,6 +30,7 @@ models_ready = False
 # Per-session state (in-memory, keyed by session_id)
 # In production, this would be in Redis or similar
 session_state = {}
+_session_metadata = {}
 
 
 def _get_session_state(session_id: str) -> dict:
@@ -48,12 +49,14 @@ def _get_session_state(session_id: str) -> dict:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global models_ready
-    print("Loading HuggingFace models... (20-30s on first run)")
-    emotion_model.load_model()
-    suggestion_model.load_model()
-    distraction_model.load_model()
+    print("Loading facial emotion model...")
+    try:
+        emotion_model.load_model()
+        print("Facial emotion model loaded successfully!")
+    except Exception as e:
+        logger.error(f"Failed to load facial emotion model: {e}")
+
     models_ready = True
-    print("Models ready.")
     yield
 
 
@@ -71,6 +74,7 @@ app.add_middleware(
 # ── Health ──
 
 @app.get("/api/health")
+@app.get("/health")
 def health():
     return {"models_ready": models_ready}
 
@@ -103,6 +107,11 @@ def start_session(
     state["topic"] = topic
     state["video_url"] = video_url
     state["student_id"] = student_id
+    _session_metadata[session_id] = {
+        "topic": topic,
+        "video_url": video_url,
+        "student_id": student_id
+    }
 
     # Load feedback from previous sessions
     adjustments = feedback_engine.get_adjustments(student_id)
@@ -396,10 +405,11 @@ _quiz_cache = {}
 
 @app.post("/api/quiz/generate/{session_id}")
 def generate_quiz(session_id: str):
-    """Generate MCQ quiz from video transcript using Ollama."""
-    state = session_state.get(session_id, {})
-    video_url = state.get("video_url", "")
-    topic = state.get("topic", "General")
+    """Generate MCQ quiz from video transcript using Ollama or intelligent topic generator."""
+    meta = _session_metadata.get(session_id, {})
+    state = session_state.get(session_id, meta)
+    video_url = state.get("video_url") or meta.get("video_url", "")
+    topic = state.get("topic") or meta.get("topic", "Machine Learning")
 
     transcript = quiz_service.fetch_transcript(video_url) if video_url else ""
     questions = quiz_service.generate_quiz(transcript, topic)
@@ -417,10 +427,11 @@ def submit_quiz(session_id: str, req: QuizSubmitRequest):
     questions = _quiz_cache.get(session_id, [])
 
     if not questions:
-        # Try regenerating
-        state = session_state.get(session_id, {})
-        video_url = state.get("video_url", "")
-        topic = state.get("topic", "General")
+        # Try regenerating using stored metadata
+        meta = _session_metadata.get(session_id, {})
+        state = session_state.get(session_id, meta)
+        video_url = state.get("video_url") or meta.get("video_url", "")
+        topic = state.get("topic") or meta.get("topic", "Machine Learning")
         transcript = quiz_service.fetch_transcript(video_url) if video_url else ""
         questions = quiz_service.generate_quiz(transcript, topic)
 

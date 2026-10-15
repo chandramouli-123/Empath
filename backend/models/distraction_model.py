@@ -27,6 +27,9 @@ def detect_distractions(image_bytes: bytes) -> dict:
     Returns phone_detected flag and list of distraction objects found.
     Threshold: 0.75 confidence to reduce false positives.
     """
+    if distraction_pipeline is None:
+        return {"phone_detected": False, "distractions": []}
+
     try:
         image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
         results = distraction_pipeline(image)
