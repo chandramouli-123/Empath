@@ -18,11 +18,21 @@ logger = logging.getLogger(__name__)
 # SEQI thresholds for engagement state
 SEQI_THRESHOLDS = [
     (70, "focused"),
-    (50, "confused"),
+    (45, "confused"),
     (30, "bored"),
     (15, "distressed"),
     (0, "distracted")
 ]
+
+# Emotion engagement weight multipliers for SEQI
+EMOTION_ENGAGEMENT_WEIGHT = {
+    "focused": 1.0,
+    "neutral": 0.85,
+    "confused": 0.58,
+    "bored": 0.40,
+    "distressed": 0.25,
+    "distracted": 0.15,
+}
 
 # Emotion class values for stability calculation
 EMOTION_VALUES = {
@@ -42,6 +52,8 @@ INTERACTION_WEIGHTS = {
     "pause": 1,
     "fast_forward": -1,  # negative — skipping is disengagement
 }
+
+SEQI_EMA_ALPHA = 0.18
 
 
 class SEQIEngine:
@@ -64,6 +76,8 @@ class SEQIEngine:
 
         # Interaction tracking
         self.interactions = []  # (timestamp, type)
+        self.last_elapsed = None
+        self._paused_time = 0.0
 
         # Recovery tracking
         self.recovery_events = []     # (drop_time, recovery_time) pairs
@@ -81,28 +95,44 @@ class SEQIEngine:
         self._smoothed_seqi = 72.0
 
     def update(self, emotion: str, behavior_events: list,
-               elapsed_seconds: float, is_distracted: bool = False) -> dict:
+               elapsed_seconds: float, is_distracted: bool = False,
+               confidence: float = 1.0) -> dict:
         """
         Update SEQI with current frame data.
         Returns full SEQI breakdown.
         """
-        now = time.time()
-        dt = now - self.last_update_time
-        self.last_update_time = now
-        self.total_time = max(elapsed_seconds, 1)
+        # Determine dt from elapsed_seconds when advancing, fallback to wall clock
+        if hasattr(self, "last_elapsed") and self.last_elapsed is not None:
+            dt = max(0.0, elapsed_seconds - self.last_elapsed)
+        else:
+            now = time.time()
+            dt = min(2.0, max(0.5, now - getattr(self, "last_update_time", now)))
+            self.last_update_time = now
+
+        if dt >= 10:
+            # The frontend pauses video and stops score submissions while the
+            # face is absent. Exclude that wall-clock gap from active SEQI time
+            # instead of turning it into a delayed BE collapse on return.
+            self._paused_time += dt
+
+        self.last_elapsed = elapsed_seconds
+        self.total_time = max(elapsed_seconds - self._paused_time, 1.0)
 
         # Facial emotion remains the user's authentic facial expression
-        effective_emotion = emotion
+        effective_emotion = str(emotion or "focused").lower()
+        confidence = max(0.0, min(1.0, float(confidence)))
 
         # Track emotion for stability analysis
         self.emotion_history.append((elapsed_seconds, effective_emotion))
 
         # Track active time (give 50% credit during background checks so score doesn't freefall)
-        if dt < 5:
+        if 0 < dt < 10:
             if not is_distracted:
                 self.active_time += dt
             else:
                 self.active_time += dt * 0.5
+
+        self.active_time = min(self.active_time, self.total_time)
 
         # Track interactions
         for event in behavior_events:
@@ -122,12 +152,28 @@ class SEQIEngine:
         self._last_id = id_score
         self._last_rr = rr
 
-        # SEQI formula with Exponential Moving Average (EMA) smoothing
-        raw_seqi = int(be * 0.4 + es * 0.3 + id_score * 0.2 + rr * 0.1)
+        # SEQI formula with Emotional Engagement Multiplier & EMA smoothing
+        component_base = be * 0.4 + es * 0.3 + id_score * 0.2 + rr * 0.1
+        emotion_key = "distracted" if is_distracted else effective_emotion.lower()
+        multiplier = EMOTION_ENGAGEMENT_WEIGHT.get(emotion_key, 0.85)
+        if not is_distracted and emotion_key not in ("focused", "neutral"):
+            # Do not apply a full penalty to an uncertain facial prediction.
+            # Full weight is reached at 0.60 confidence, matching the local
+            # emotion model's high-conviction threshold.
+            confidence_factor = min(
+                1.0,
+                max(0.0, (confidence - 0.25) / (0.60 - 0.25))
+            )
+            multiplier = 1.0 - ((1.0 - multiplier) * confidence_factor)
+        raw_seqi = int(component_base * multiplier)
         raw_seqi = max(0, min(100, raw_seqi))
 
         if hasattr(self, "_smoothed_seqi") and self._smoothed_seqi is not None:
-            self._smoothed_seqi = 0.80 * self._smoothed_seqi + 0.20 * raw_seqi
+            smoothing_alpha = 0.45 if is_distracted else SEQI_EMA_ALPHA
+            self._smoothed_seqi = (
+                (1 - smoothing_alpha) * self._smoothed_seqi
+                + smoothing_alpha * raw_seqi
+            )
         else:
             self._smoothed_seqi = float(raw_seqi)
 
@@ -277,7 +323,7 @@ class SEQIEngine:
 
     def _track_recovery(self, timestamp: float, emotion: str):
         """Track recovery events: time from drop to focused."""
-        if emotion in ("distracted", "confused", "distressed"):
+        if emotion in ("distracted", "confused", "bored", "distressed"):
             if not self._in_recovery:
                 self._in_recovery = True
                 self._recovery_start = timestamp

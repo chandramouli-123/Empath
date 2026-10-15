@@ -10,11 +10,18 @@ function extractVideoId(url) {
   }
 }
 
-export default function VideoPlayer({ url, onPause, onPlay, onSeek, onTimeUpdate }) {
+export default function VideoPlayer({
+  url, onPause, onPlay, onSeek, onTimeUpdate, pauseForMissingFace, resumeToken
+}) {
   const videoId = extractVideoId(url)
   const lastTimeRef = useRef(0)
   const playerRef = useRef(null)
   const timeIntervalRef = useRef(null)
+  const onTimeUpdateRef = useRef(onTimeUpdate)
+
+  useEffect(() => {
+    onTimeUpdateRef.current = onTimeUpdate
+  }, [onTimeUpdate])
 
   // Poll current video time every second so the UI can show real YouTube timestamps
   useEffect(() => {
@@ -24,13 +31,25 @@ export default function VideoPlayer({ url, onPause, onPlay, onSeek, onTimeUpdate
           const t = playerRef.current.getCurrentTime()
           if (t != null) {
             lastTimeRef.current = t
-            onTimeUpdate?.(t)
+            onTimeUpdateRef.current?.(t)
           }
         } catch { /* player not ready */ }
       }
     }, 1000)
     return () => clearInterval(timeIntervalRef.current)
-  }, [onTimeUpdate])
+  }, [])
+
+  useEffect(() => {
+    if (pauseForMissingFace && playerRef.current) {
+      playerRef.current.pauseVideo()
+    }
+  }, [pauseForMissingFace])
+
+  useEffect(() => {
+    if (resumeToken && playerRef.current) {
+      playerRef.current.playVideo()
+    }
+  }, [resumeToken])
 
   const opts = {
     width: '100%',

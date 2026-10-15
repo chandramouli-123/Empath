@@ -1,42 +1,107 @@
-"""
-Quiz Service — Generate MCQ quizzes from YouTube transcripts using Ollama (Llama).
-
-1. Fetch YouTube transcript
-2. Pass transcript to Ollama (local llama model)
-3. Generate 4 MCQ questions (3 conceptual + 1 applied)
-4. Grade selected answers
-"""
+"""Generate transcript-grounded quizzes through Gemini with a local fallback."""
+import os
 import logging
 import re
 import json
-import requests
+import time
+import httpx
 
 logger = logging.getLogger(__name__)
 
-OLLAMA_URL = "http://localhost:11434/api/generate"
-OLLAMA_MODEL = "llama3.2"  # Use whatever llama model the user has pulled
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
+GEMINI_URL = (
+    "https://generativelanguage.googleapis.com/v1beta/models/"
+    f"{GEMINI_MODEL}:generateContent"
+)
+PREDEFINED_VIDEO_IDS = {"jGwO_UgTS7I", "UzxYlbK2c7E"}
 
 
-def _ollama_generate(prompt: str, max_tokens: int = 1024) -> str:
-    """Call Ollama local API for text generation."""
-    try:
-        resp = requests.post(OLLAMA_URL, json={
-            "model": OLLAMA_MODEL,
-            "prompt": prompt,
-            "stream": False,
+def predefined_quiz_for_video(video_url: str) -> list:
+    """Return stable, transcript-grounded questions for the demo lecture."""
+    if _extract_video_id(video_url) not in PREDEFINED_VIDEO_IDS:
+        return []
+    return [
+        {
+            "question": "What is the main goal of the CS229 machine learning course described in the lecture?",
+            "type": "conceptual",
             "options": {
-                "num_predict": max_tokens,
-                "temperature": 0.7,
-            }
-        }, timeout=60)
-        resp.raise_for_status()
-        return resp.json().get("response", "").strip()
-    except requests.exceptions.ConnectionError:
-        logger.error("Ollama not running. Start it with: ollama serve")
+                "A": "To teach only software engineering interview techniques",
+                "B": "To equip students to understand and build meaningful machine learning applications",
+                "C": "To replace probability and linear algebra with programming practice",
+                "D": "To focus exclusively on self-driving cars",
+            },
+            "correct": "B",
+            "index": 0,
+        },
+        {
+            "question": "Why does Andrew Ng compare AI to the new electricity?",
+            "type": "conceptual",
+            "options": {
+                "A": "Both are useful only in the energy industry",
+                "B": "Both are primarily methods for reducing computer power usage",
+                "C": "AI is expected to transform many major industries, as electricity did",
+                "D": "Electricity is required to train every machine learning model",
+            },
+            "correct": "C",
+            "index": 1,
+        },
+        {
+            "question": "Which background does the lecture identify as useful preparation for CS229?",
+            "type": "conceptual",
+            "options": {
+                "A": "Basic computer science, probability, and linear algebra",
+                "B": "Advanced chemistry and mechanical engineering",
+                "C": "Only prior experience deploying mobile applications",
+                "D": "No mathematics or programming knowledge",
+            },
+            "correct": "A",
+            "index": 2,
+        },
+        {
+            "question": "Applied scenario: A logistics company has valuable data but no machine learning team. What opportunity does the lecture suggest?",
+            "type": "applied",
+            "options": {
+                "A": "Ignore the data until the company becomes a technology company",
+                "B": "Apply machine learning to a useful logistics problem where there may be little competition",
+                "C": "Use machine learning only after hiring hundreds of researchers",
+                "D": "Replace all logistics workers immediately with an untested model",
+            },
+            "correct": "B",
+            "index": 3,
+        },
+    ]
+
+
+def _gemini_generate(prompt: str) -> str:
+    """Generate quiz JSON through Gemini without requiring a local model."""
+    api_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    if not api_key or api_key == "YOUR_GEMINI_API_KEY":
         return ""
-    except Exception as e:
-        logger.error(f"Ollama generation failed: {e}")
-        return ""
+
+    for attempt in range(2):
+        try:
+            response = httpx.post(
+                f"{GEMINI_URL}?key={api_key}",
+                json={
+                    "contents": [{"parts": [{"text": prompt}]}],
+                    "generationConfig": {
+                        "response_mime_type": "application/json",
+                        "temperature": 0.2,
+                        "max_output_tokens": 1500,
+                    },
+                },
+                timeout=30.0,
+            )
+            if response.status_code == 503 and attempt == 0:
+                time.sleep(1)
+                continue
+            response.raise_for_status()
+            parts = response.json().get("candidates", [{}])[0].get("content", {}).get("parts", [])
+            return parts[0].get("text", "").strip() if parts else ""
+        except Exception as e:
+            logger.warning("Gemini quiz generation failed: %s", e)
+            return ""
+    return ""
 
 
 def fetch_transcript(video_url: str) -> str:
@@ -48,8 +113,18 @@ def fetch_transcript(video_url: str) -> str:
         if not video_id:
             return ""
 
-        transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
-        text = " ".join(entry["text"] for entry in transcript_list)
+        # youtube-transcript-api 1.x exposes an instance-based fetch method;
+        # retain compatibility with the older class method used previously.
+        if hasattr(YouTubeTranscriptApi, "get_transcript"):
+            transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
+            entries = transcript_list
+        else:
+            transcript_list = YouTubeTranscriptApi().fetch(video_id)
+            entries = transcript_list
+        text = " ".join(
+            entry.text if hasattr(entry, "text") else entry["text"]
+            for entry in entries
+        )
         return text[:4000]  # Limit for context
 
     except ImportError:
@@ -124,11 +199,11 @@ Respond ONLY with valid JSON in this exact format (no other text):
   }}
 ]"""
 
-    raw = _ollama_generate(prompt, max_tokens=1500)
+    raw = _gemini_generate(prompt)
     questions = _parse_mcq_response(raw)
 
     if len(questions) < 2:
-        logger.warning("Ollama returned insufficient questions, using fallback")
+        logger.warning("Gemini returned insufficient questions, using fallback")
         return _generate_fallback_quiz(topic)
 
     # Add index
@@ -196,7 +271,7 @@ Format:
   {{"question": "...", "type": "applied", "options": {{"A": "...", "B": "...", "C": "...", "D": "..."}}, "correct": "D"}}
 ]"""
 
-    raw = _ollama_generate(prompt, max_tokens=1500)
+    raw = _gemini_generate(prompt)
     questions = _parse_mcq_response(raw)
 
     if not questions:

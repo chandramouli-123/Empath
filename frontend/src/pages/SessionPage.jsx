@@ -58,6 +58,7 @@ export default function SessionPage() {
   const [emotion, setEmotion] = useState('focused')
   const [manualEmotion, setManualEmotion] = useState(null)
   const manualEmotionRef = useRef(null)
+  const phoneDetectedUntilRef = useRef(null)
 
   function handleSetManualEmotion(emo) {
     setManualEmotion(emo)
@@ -65,11 +66,16 @@ export default function SessionPage() {
     if (emo) {
       setEmotion(emo)
       if (sessionId) {
-        computeScore(sessionId, emo, 0.95, recentEventsRef.current, elapsedRef.current, false, [])
+        const isCurrentlyDistracted = phoneDetected || Boolean(phoneDetectedUntilRef.current && Date.now() < phoneDetectedUntilRef.current)
+        computeScore(
+          sessionId, emo, 0.95, recentEventsRef.current, elapsedRef.current,
+          isCurrentlyDistracted, isCurrentlyDistracted ? ['phone_detected'] : []
+        )
           .then(res => {
             setSeqiScore(res.seqi_score || res.focus_score)
             setSeqiComponents({ be: res.be, es: res.es, id: res.id, rr: res.rr })
             setTrendSlope(res.trend_slope || 0)
+            setIsDistracted(res.is_distracted || isCurrentlyDistracted)
           })
           .catch(() => {})
       }
@@ -81,6 +87,7 @@ export default function SessionPage() {
   const [trendSlope, setTrendSlope] = useState(0)
   const [isDistracted, setIsDistracted] = useState(false)
   const [phoneDetected, setPhoneDetected] = useState(false)
+  const [pauseForMissingFace, setPauseForMissingFace] = useState(false)
   const [suggestion, setSuggestion] = useState(null)
   const [chartData, setChartData] = useState([])
   const [suggestions, setSuggestions] = useState([])
@@ -101,6 +108,9 @@ export default function SessionPage() {
   const behavioralSummaryRef = useRef({})
   const videoTimeRef = useRef(0)
   const isAnalyzingRef = useRef(false)
+  const missingFaceCountRef = useRef(0)
+  const autoPausedForFaceRef = useRef(false)
+  const resumeTokenRef = useRef(0)
 
   // Determine suggestion sensitivity from feedback
   const sensitivityRef = useRef(feedbackAdjustments?.suggestion_sensitivity || 1.0)
@@ -209,34 +219,84 @@ export default function SessionPage() {
       if (!blob) return
 
       const ts = elapsedRef.current
-      let detectedEmotion = manualEmotionRef.current
-      let detectedConf = 0.95
-      let detectedPhone = false
 
-      if (!detectedEmotion) {
-        const emotionResult = await analyzeEmotion(blob)
-        detectedEmotion = emotionResult.emotion
-        detectedConf = emotionResult.confidence
-        detectedPhone = emotionResult.phone_detected
-      }
+      // Always analyze webcam frame in background for phone & object detection
+      const emotionResult = await analyzeEmotion(blob).catch(err => {
+        console.error('analyzeEmotion error:', err)
+        return null
+      })
 
+      const detectedPhone = Boolean(emotionResult?.phone_detected)
+      const faceDetected = emotionResult?.face_detected !== false
+
+      // Apply phone results before the face-presence gate. A phone can remain
+      // visible even when the face detector temporarily misses the face.
       if (detectedPhone) {
         setPhoneDetected(true)
+        phoneDetectedUntilRef.current = Date.now() + 4000
         recentEventsRef.current = [...recentEventsRef.current.slice(-9), 'phone_detected']
-        await sendBehaviorEvent(sessionId, ts, 'phone_detected')
+        sendBehaviorEvent(sessionId, ts, 'phone_detected').catch(() => {})
         addEventLog(ts, 'phone_detected')
-        setTimeout(() => setPhoneDetected(false), 4000)
+      } else if (phoneDetectedUntilRef.current && Date.now() >= phoneDetectedUntilRef.current) {
+        setPhoneDetected(false)
+        phoneDetectedUntilRef.current = null
       }
+
+      if (!faceDetected) {
+        missingFaceCountRef.current += 1
+        if (missingFaceCountRef.current >= 2 && !autoPausedForFaceRef.current) {
+          autoPausedForFaceRef.current = true
+          setPauseForMissingFace(true)
+          setEmotion('distracted')
+          setIsDistracted(true)
+          const scoreResult = await computeScore(
+            sessionId,
+            'distracted',
+            1,
+            recentEventsRef.current,
+            ts,
+            true,
+            ['face_missing']
+          )
+          const score = scoreResult.seqi_score ?? scoreResult.focus_score ?? 0
+          setSeqiScore(score)
+          setSeqiComponents({ be: scoreResult.be, es: scoreResult.es, id: scoreResult.id, rr: scoreResult.rr })
+          setTrendSlope(scoreResult.trend_slope || 0)
+          setChartData(prev => [...prev.slice(-60), { time: ts, score, emotion: 'distracted' }])
+          addEventLog(ts, 'face_missing_pause')
+        }
+        return
+      }
+
+      const faceReturned = missingFaceCountRef.current > 0
+      missingFaceCountRef.current = 0
+      if (faceReturned && autoPausedForFaceRef.current) {
+        autoPausedForFaceRef.current = false
+        setPauseForMissingFace(false)
+        resumeTokenRef.current += 1
+        setIsDistracted(false)
+      }
+
+      const modelEmotion = emotionResult?.emotion || 'focused'
+      const modelConf = emotionResult?.confidence || 0.95
+
+      // Respect manual demo override if selected; otherwise use model detected emotion
+      const isManual = Boolean(manualEmotionRef.current)
+      const effectiveEmotion = manualEmotionRef.current || modelEmotion
+      const effectiveConf = isManual ? 0.95 : modelConf
+
+      const isCurrentlyDistracted = effectiveEmotion === 'distracted'
+        || detectedPhone
+        || Boolean(phoneDetectedUntilRef.current && Date.now() < phoneDetectedUntilRef.current)
 
       const events = recentEventsRef.current
       const scoreResult = await computeScore(
-        sessionId, detectedEmotion, detectedConf, events, ts,
-        false, []  // let backend detect distraction
+        sessionId, effectiveEmotion, effectiveConf, events, ts,
+        isCurrentlyDistracted, isCurrentlyDistracted ? ['phone_detected'] : []
       )
 
-      const score = scoreResult.seqi_score || scoreResult.focus_score
-      const state = scoreResult.engagement_state
-      const effectiveEmotion = manualEmotionRef.current || scoreResult.emotion || detectedEmotion
+      const score = scoreResult.seqi_score ?? scoreResult.focus_score ?? 70
+      const state = scoreResult.engagement_state || 'focused'
 
       // Clear consumed events
       recentEventsRef.current = []
@@ -245,7 +305,7 @@ export default function SessionPage() {
       setSeqiScore(score)
       setSeqiComponents({ be: scoreResult.be, es: scoreResult.es, id: scoreResult.id, rr: scoreResult.rr })
       setTrendSlope(scoreResult.trend_slope || 0)
-      setIsDistracted(scoreResult.is_distracted || false)
+      setIsDistracted(scoreResult.is_distracted || isCurrentlyDistracted)
       setChartData(prev => [...prev.slice(-60), { time: ts, score, emotion: effectiveEmotion }])
 
       // Update behavioral summary for suggestions
@@ -327,7 +387,12 @@ export default function SessionPage() {
             <span className="text-black font-extrabold text-xs">E</span>
           </div>
           <span className="text-gray-300 text-sm truncate max-w-xs">{topic}</span>
-          {isDistracted && (
+          {phoneDetected && (
+            <span className="px-3 py-1 rounded-full text-xs font-bold text-white bg-red-600 shadow-[0_0_15px_rgba(239,68,68,0.7)] animate-pulse flex items-center gap-1.5">
+              <span>📱</span> PHONE DETECTED
+            </span>
+          )}
+          {isDistracted && !phoneDetected && (
             <span className="px-2 py-0.5 rounded-full text-xs font-bold text-white bg-purple-500/80 animate-pulse">
               DISTRACTED
             </span>
@@ -350,11 +415,15 @@ export default function SessionPage() {
         {/* Left — Video + Chart */}
         <div className="flex-1 flex flex-col items-center min-w-0">
           {/* Video area */}
-          <div className="relative w-full max-w-5xl">
+          <div className={`relative w-full max-w-5xl rounded-2xl transition-all duration-500 ${
+            phoneDetected ? 'ring-2 ring-red-500 shadow-[0_0_35px_rgba(239,68,68,0.35)]' : ''
+          }`}>
             <VideoPlayer
               url={videoUrl}
+              pauseForMissingFace={pauseForMissingFace}
+              resumeToken={resumeTokenRef.current}
               onPause={(ts) => handleBehaviorEvent('pause', ts)}
-              onPlay={() => { }}
+              onPlay={(ts) => handleBehaviorEvent('play', ts)}
               onSeek={(type, ts) => handleBehaviorEvent(type, ts)}
               onTimeUpdate={handleTimeUpdate}
             />
@@ -406,13 +475,19 @@ export default function SessionPage() {
             <AnimatePresence>
               {phoneDetected && (
                 <motion.div
-                  className="absolute bottom-4 left-1/2 -translate-x-1/2 px-5 py-2 rounded-full text-sm font-bold text-white z-20"
-                  style={{ backgroundColor: '#EF4444' }}
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: 20 }}
+                  className="absolute bottom-5 left-1/2 -translate-x-1/2 px-6 py-2.5 rounded-full text-sm font-bold text-white z-30 flex items-center gap-2.5 shadow-2xl backdrop-blur-md"
+                  style={{
+                    backgroundColor: 'rgba(220, 38, 38, 0.95)',
+                    border: '1px solid rgba(254, 202, 202, 0.4)',
+                    boxShadow: '0 8px 30px rgba(239, 68, 68, 0.6)'
+                  }}
+                  initial={{ opacity: 0, y: 25, scale: 0.9 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 25, scale: 0.9 }}
+                  transition={{ type: 'spring', stiffness: 350, damping: 25 }}
                 >
-                  📱 Phone detected — Focus penalty
+                  <span className="text-xl animate-bounce">📱</span>
+                  <span>Phone Detected</span>
                 </motion.div>
               )}
             </AnimatePresence>
@@ -459,19 +534,28 @@ export default function SessionPage() {
 
       {/* Webcam bubble — fixed bottom-right */}
       <div className="fixed bottom-6 right-6 z-50">
-        <div className={`relative rounded-full overflow-hidden border-2
-                         ${hasPermission ? 'border-green-400' : 'border-gray-600'}`}
+        <div className={`relative rounded-full overflow-hidden border-2 transition-all duration-300
+                         ${phoneDetected
+                            ? 'border-red-500 ring-4 ring-red-500/50 shadow-[0_0_25px_rgba(239,68,68,0.8)] animate-pulse'
+                            : hasPermission ? 'border-green-400' : 'border-gray-600'}`}
           style={{
             width: 96, height: 96,
-            boxShadow: hasPermission
-              ? '0 0 0 3px rgba(74,222,128,0.25), 0 4px 20px rgba(0,0,0,0.5)'
-              : '0 4px 20px rgba(0,0,0,0.5)',
+            boxShadow: phoneDetected
+              ? '0 0 25px rgba(239,68,68,0.8), 0 4px 20px rgba(0,0,0,0.5)'
+              : hasPermission
+                ? '0 0 0 3px rgba(74,222,128,0.25), 0 4px 20px rgba(0,0,0,0.5)'
+                : '0 4px 20px rgba(0,0,0,0.5)',
           }}>
           {hasPermission
             ? <video ref={videoRef} autoPlay muted playsInline className="w-full h-full object-cover scale-x-[-1]" />
             : <div className="w-full h-full flex items-center justify-center text-2xl"
               style={{ background: '#1A1A1A' }}>🔒</div>
           }
+          {phoneDetected && (
+            <div className="absolute inset-0 bg-red-950/40 flex items-center justify-center pointer-events-none">
+              <span className="text-2xl drop-shadow-md animate-bounce">📱</span>
+            </div>
+          )}
         </div>
         <canvas ref={canvasRef} className="hidden" />
       </div>

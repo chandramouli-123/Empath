@@ -47,6 +47,7 @@ class EmotionResponse(BaseModel):
     emotion: str
     confidence: float
     raw_label: str = ""
+    face_detected: bool = True
     phone_detected: bool = False
     distractions: List[str] = []
 

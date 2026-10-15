@@ -96,7 +96,7 @@ export default function QuickStartPage() {
             <input
               value={name}
               onChange={e => setName(e.target.value)}
-              placeholder="e.g. Nithish"
+              placeholder="e.g. John Doe"
               autoFocus
             />
           </div>

@@ -29,7 +29,7 @@ export default function QuizPage() {
         try {
             const data = await generateQuiz(sessionId)
             if (!data.questions || data.questions.length === 0) {
-                setError('Could not generate questions. Make sure Ollama is running (ollama serve).')
+                setError('Could not generate questions for this video.')
                 setState(STATES.ERROR)
                 return
             }
@@ -37,7 +37,7 @@ export default function QuizPage() {
             setAnswers(new Array(data.questions.length).fill(''))
             setState(STATES.QUIZ)
         } catch (e) {
-            setError('Failed to generate quiz. Make sure Ollama is running with a llama model pulled.')
+            setError('Failed to generate quiz. Please try again.')
             setState(STATES.ERROR)
         }
     }

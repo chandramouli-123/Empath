@@ -73,13 +73,11 @@ export function useWebcam() {
         const ctx = canvas.getContext('2d')
         const vw = video.videoWidth
         const vh = video.videoHeight
-        const minDim = Math.min(vw, vh)
-        const sx = (vw - minDim) / 2
-        const sy = (vh - minDim) / 2
 
-        canvas.width = 224
-        canvas.height = 224
-        ctx.drawImage(video, sx, sy, minDim, minDim, 0, 0, 224, 224)
+        // Capture full field of view (320x240) so hands and phones held to the side are not cropped out
+        canvas.width = 320
+        canvas.height = 240
+        ctx.drawImage(video, 0, 0, vw, vh, 0, 0, 320, 240)
         canvas.toBlob((blob) => resolve(blob), 'image/jpeg', 0.8)
       } catch (err) {
         console.error('captureFrame error:', err)

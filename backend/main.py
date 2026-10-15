@@ -56,6 +56,13 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Failed to load facial emotion model: {e}")
 
+    print("Loading distraction detection model...")
+    try:
+        distraction_model.load_model()
+        print("Distraction detection model loaded successfully!")
+    except Exception as e:
+        logger.error(f"Failed to load distraction detection model: {e}")
+
     models_ready = True
     yield
 
@@ -151,6 +158,17 @@ async def analyze_emotion(file: UploadFile = File(...)):
         raise HTTPException(status_code=503, detail="Models still loading")
     try:
         image_bytes = await file.read()
+        face_detected = emotion_model.detect_face(image_bytes)
+        distraction_result = distraction_model.detect_distractions(image_bytes)
+
+        if not face_detected:
+            return {
+                "emotion": "distracted",
+                "confidence": 1.0,
+                "raw_label": "no_face",
+                "face_detected": False,
+                **distraction_result,
+            }
 
         # Check if Gemini Vision backend is enabled and key is present
         gemini_result = None
@@ -159,11 +177,14 @@ async def analyze_emotion(file: UploadFile = File(...)):
             gemini_result = gemini_emotion.analyze_with_gemini(image_bytes)
 
         if gemini_result:
+            gemini_result.update({
+                "face_detected": True,
+                **distraction_result,
+            })
             return gemini_result
 
         # Local model baseline (fast, offline, private)
         result = emotion_model.analyze_frame(image_bytes)
-        distraction_result = distraction_model.detect_distractions(image_bytes)
         result.update(distraction_result)
         return result
     except Exception as e:
@@ -172,6 +193,7 @@ async def analyze_emotion(file: UploadFile = File(...)):
             "emotion": "focused",
             "confidence": 0.0,
             "raw_label": "error",
+            "face_detected": False,
             "phone_detected": False,
             "distractions": []
         }
@@ -214,7 +236,15 @@ def compute_score(req: ComputeScoreRequest):
 
     # Check distraction
     distraction_result = state["distraction"].detect(req.timestamp_seconds)
-    is_distracted = req.is_distracted or distraction_result["is_distracted"]
+    emotion_is_distracted = req.emotion.strip().lower() == "distracted"
+    is_distracted = (
+        req.is_distracted
+        or emotion_is_distracted
+        or distraction_result["is_distracted"]
+    )
+    distraction_reasons = list(distraction_result["reasons"])
+    if emotion_is_distracted and "emotion_distracted" not in distraction_reasons:
+        distraction_reasons.append("emotion_distracted")
 
     # Record focus score for distraction detector
     # (uses old scoring for backward compat input)
@@ -226,7 +256,8 @@ def compute_score(req: ComputeScoreRequest):
         emotion=req.emotion,
         behavior_events=req.recent_events,
         elapsed_seconds=req.timestamp_seconds,
-        is_distracted=is_distracted
+        is_distracted=is_distracted,
+        confidence=req.confidence
     )
 
     # Log to SQLite
@@ -249,7 +280,7 @@ def compute_score(req: ComputeScoreRequest):
     return {
         **seqi_result,
         "is_distracted": is_distracted,
-        "distraction_reasons": distraction_result["reasons"]
+        "distraction_reasons": distraction_reasons
     }
 
 
@@ -423,7 +454,9 @@ def generate_quiz(session_id: str):
     topic = state.get("topic") or meta.get("topic", "Machine Learning")
 
     transcript = quiz_service.fetch_transcript(video_url) if video_url else ""
-    questions = quiz_service.generate_quiz(transcript, topic)
+    questions = quiz_service.predefined_quiz_for_video(video_url)
+    if not questions:
+        questions = quiz_service.generate_quiz(transcript, topic)
 
     # Cache for submit
     _quiz_cache[session_id] = questions
@@ -444,7 +477,9 @@ def submit_quiz(session_id: str, req: QuizSubmitRequest):
         video_url = state.get("video_url") or meta.get("video_url", "")
         topic = state.get("topic") or meta.get("topic", "Machine Learning")
         transcript = quiz_service.fetch_transcript(video_url) if video_url else ""
-        questions = quiz_service.generate_quiz(transcript, topic)
+        questions = quiz_service.predefined_quiz_for_video(video_url)
+        if not questions:
+            questions = quiz_service.generate_quiz(transcript, topic)
 
     # Grade MCQ answers
     result = quiz_service.grade_answers(questions, req.answers)

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 import io
 import json
@@ -34,18 +36,18 @@ def analyze_with_gemini(image_bytes: bytes) -> dict | None:
         prompt = (
             "You are an AI educational emotion and engagement analyzer. "
             "Analyze this student's webcam frame while they are watching an educational lecture. "
-            "Return ONLY a valid JSON object matching this schema:\n"
+            "Return ONLY one valid JSON object matching this schema; do not include markdown or extra text:\n"
             "{\n"
             '  "emotion": "focused" | "neutral" | "confused" | "bored" | "distressed",\n'
-            '  "confidence": 0.95,\n'
-            '  "phone_detected": false,\n'
-            '  "reason": "Attentive gaze towards screen"\n'
+            '  "phone_detected": true\n'
             "}\n"
             "Guidelines:\n"
             "- Attentive gaze on screen / taking notes / calm or slight smile = 'focused'.\n"
             "- Frowning at content / head tilt / scratching chin curiously = 'confused'.\n"
             "- Slumped / looking away aimlessly / yawning = 'bored'.\n"
-            "- Holding phone or looking down into lap at screen = phone_detected: true."
+            "- Set phone_detected to true if a smartphone/cell phone is visible or being held, "
+            "even if only partly visible. Otherwise set it to false. "
+            "phone_detected must be a JSON boolean, not a string."
         )
 
         payload = {
@@ -91,7 +93,13 @@ def analyze_with_gemini(image_bytes: bytes) -> dict | None:
         raw_emo = str(parsed.get("emotion", "focused")).lower().strip()
         emotion = raw_emo if raw_emo in VALID_EMOTIONS else "focused"
         confidence = float(parsed.get("confidence", 0.90))
-        phone_detected = bool(parsed.get("phone_detected", False))
+        phone_value = parsed.get("phone_detected", False)
+        if isinstance(phone_value, bool):
+            phone_detected = phone_value
+        elif isinstance(phone_value, str):
+            phone_detected = phone_value.strip().lower() == "true"
+        else:
+            phone_detected = False
 
         return {
             "emotion": emotion,
