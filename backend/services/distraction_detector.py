@@ -12,9 +12,9 @@ import logging
 logger = logging.getLogger(__name__)
 
 # Thresholds
-IDLE_THRESHOLD_SECONDS = 30
-TAB_SWITCH_THRESHOLD = 2          # tab switches in 60s window
-FOCUS_DROP_THRESHOLD = 3          # focus drops below 50 in 60s window
+IDLE_THRESHOLD_SECONDS = 45
+TAB_SWITCH_THRESHOLD = 4          # tab switches in 20s window
+FOCUS_DROP_THRESHOLD = 4          # focus drops below 50 in 60s window
 BEHAVIOR_DROP_THRESHOLD = 30      # points drop in 10s
 
 
@@ -23,15 +23,16 @@ class DistractionDetector:
         self.reset()
 
     def reset(self):
-        self.last_activity_time = time.time()
-        self.tab_switches = []          # timestamps of tab switches
+        self.last_activity_elapsed = 0.0
+        self.tab_switches = []          # timestamps of tab switches (elapsed seconds)
         self.focus_drops = []           # timestamps of focus drops below 50
         self.behavior_scores = []       # (timestamp, score) pairs
         self.idle_detected = False
 
-    def record_activity(self):
+    def record_activity(self, timestamp: float = None):
         """Call when user interacts (mouse, keyboard, video control)."""
-        self.last_activity_time = time.time()
+        if timestamp is not None:
+            self.last_activity_elapsed = timestamp
         self.idle_detected = False
 
     def record_tab_switch(self, timestamp: float):
@@ -44,22 +45,22 @@ class DistractionDetector:
         if score < 50:
             self.focus_drops.append(timestamp)
 
-    def detect(self, current_time: float = None) -> dict:
+    def detect(self, current_time: float = 0.0) -> dict:
         """
         Evaluate all distraction signals and return result.
         Returns { is_distracted: bool, reasons: list[str] }
         """
-        now = current_time or time.time()
+        now = current_time
         reasons = []
 
-        # 1. Idle detection
-        idle_seconds = now - self.last_activity_time
+        # 1. Idle detection based on session elapsed time
+        idle_seconds = max(0.0, now - self.last_activity_elapsed) if self.last_activity_elapsed > 0 else 0.0
         if idle_seconds > IDLE_THRESHOLD_SECONDS:
             reasons.append(f"idle_{int(idle_seconds)}s")
             self.idle_detected = True
 
-        # 2. Tab switches in last 60s
-        recent_tab_switches = [t for t in self.tab_switches if now - t < 60]
+        # 2. Tab switches in last 20s
+        recent_tab_switches = [t for t in self.tab_switches if now - t < 20]
         self.tab_switches = recent_tab_switches  # prune old
         if len(recent_tab_switches) >= TAB_SWITCH_THRESHOLD:
             reasons.append(f"tab_switches_{len(recent_tab_switches)}")
@@ -87,4 +88,4 @@ class DistractionDetector:
         }
 
     def get_idle_seconds(self) -> float:
-        return time.time() - self.last_activity_time
+        return getattr(self, "last_activity_elapsed", 0.0)

@@ -10,7 +10,7 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-from models import emotion_model, suggestion_model, distraction_model
+from models import emotion_model, suggestion_model, distraction_model, gemini_emotion
 from services import scoring, session as session_service
 from services.seqi import SEQIEngine, get_behavioral_summary
 from services.distraction_detector import DistractionDetector
@@ -151,6 +151,17 @@ async def analyze_emotion(file: UploadFile = File(...)):
         raise HTTPException(status_code=503, detail="Models still loading")
     try:
         image_bytes = await file.read()
+
+        # Check if Gemini Vision backend is enabled and key is present
+        gemini_result = None
+        use_gemini = os.environ.get("EMOTION_BACKEND", "").lower() != "local" and gemini_emotion.is_gemini_available()
+        if use_gemini:
+            gemini_result = gemini_emotion.analyze_with_gemini(image_bytes)
+
+        if gemini_result:
+            return gemini_result
+
+        # Local model baseline (fast, offline, private)
         result = emotion_model.analyze_frame(image_bytes)
         distraction_result = distraction_model.detect_distractions(image_bytes)
         result.update(distraction_result)
@@ -173,7 +184,7 @@ def behavior_event(req: BehaviorEventRequest):
     state = _get_session_state(req.session_id)
 
     # Record activity for distraction detector
-    state["distraction"].record_activity()
+    state["distraction"].record_activity(req.timestamp_seconds)
 
     session_service.save_behavior_event(
         req.session_id, req.timestamp_seconds, req.event_type

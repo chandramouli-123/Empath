@@ -209,10 +209,16 @@ export default function SessionPage() {
       if (!blob) return
 
       const ts = elapsedRef.current
-      const emotionResult = await analyzeEmotion(blob)
-      const detectedEmotion = emotionResult.emotion
-      const detectedConf = emotionResult.confidence
-      const detectedPhone = emotionResult.phone_detected
+      let detectedEmotion = manualEmotionRef.current
+      let detectedConf = 0.95
+      let detectedPhone = false
+
+      if (!detectedEmotion) {
+        const emotionResult = await analyzeEmotion(blob)
+        detectedEmotion = emotionResult.emotion
+        detectedConf = emotionResult.confidence
+        detectedPhone = emotionResult.phone_detected
+      }
 
       if (detectedPhone) {
         setPhoneDetected(true)
@@ -230,7 +236,7 @@ export default function SessionPage() {
 
       const score = scoreResult.seqi_score || scoreResult.focus_score
       const state = scoreResult.engagement_state
-      const effectiveEmotion = scoreResult.emotion || detectedEmotion
+      const effectiveEmotion = manualEmotionRef.current || scoreResult.emotion || detectedEmotion
 
       // Clear consumed events
       recentEventsRef.current = []

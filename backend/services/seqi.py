@@ -78,6 +78,7 @@ class SEQIEngine:
         self._last_es = 80
         self._last_id = 50
         self._last_rr = 80
+        self._smoothed_seqi = 72.0
 
     def update(self, emotion: str, behavior_events: list,
                elapsed_seconds: float, is_distracted: bool = False) -> dict:
@@ -90,15 +91,18 @@ class SEQIEngine:
         self.last_update_time = now
         self.total_time = max(elapsed_seconds, 1)
 
-        # Override emotion if distracted
-        effective_emotion = "distracted" if is_distracted else emotion
+        # Facial emotion remains the user's authentic facial expression
+        effective_emotion = emotion
 
-        # Track emotion
+        # Track emotion for stability analysis
         self.emotion_history.append((elapsed_seconds, effective_emotion))
 
-        # Track active time (non-idle, non-distracted)
-        if effective_emotion not in ("distracted",) and dt < 5:
-            self.active_time += dt
+        # Track active time (give 50% credit during background checks so score doesn't freefall)
+        if dt < 5:
+            if not is_distracted:
+                self.active_time += dt
+            else:
+                self.active_time += dt * 0.5
 
         # Track interactions
         for event in behavior_events:
@@ -118,14 +122,21 @@ class SEQIEngine:
         self._last_id = id_score
         self._last_rr = rr
 
-        # SEQI formula
-        seqi = int(be * 0.4 + es * 0.3 + id_score * 0.2 + rr * 0.1)
-        seqi = max(0, min(100, seqi))
+        # SEQI formula with Exponential Moving Average (EMA) smoothing
+        raw_seqi = int(be * 0.4 + es * 0.3 + id_score * 0.2 + rr * 0.1)
+        raw_seqi = max(0, min(100, raw_seqi))
+
+        if hasattr(self, "_smoothed_seqi") and self._smoothed_seqi is not None:
+            self._smoothed_seqi = 0.80 * self._smoothed_seqi + 0.20 * raw_seqi
+        else:
+            self._smoothed_seqi = float(raw_seqi)
+
+        seqi = int(round(self._smoothed_seqi))
 
         # Track score for trend
         self.score_history.append((elapsed_seconds, seqi))
 
-        # Engagement state from SEQI
+        # Engagement state from SEQI or behavioral distraction
         if is_distracted:
             engagement_state = "distracted"
         else:

@@ -165,6 +165,13 @@ def generate_suggestion(emotion: str, topic: str,
     # Step 2: Build structured context for FLAN-T5
     ts_str = f"{int(video_timestamp // 60)}:{int(video_timestamp % 60):02d}"
 
+    if suggestion_pipeline is None:
+        return {
+            "suggestion": FALLBACK_SUGGESTIONS.get(emotion, "Take a moment to refocus."),
+            "action": action,
+            "category": gate["category"]
+        }
+
     try:
         prompt = (
             f"You are a learning assistant. Generate one short, specific suggestion.\n"
@@ -186,7 +193,7 @@ def generate_suggestion(emotion: str, topic: str,
             result = FALLBACK_SUGGESTIONS.get(emotion, "Take a moment to refocus.")
 
     except Exception as e:
-        logger.error(f"Suggestion generation failed: {e}")
+        logger.warning(f"Suggestion pipeline fallback used: {e}")
         result = FALLBACK_SUGGESTIONS.get(emotion, "Take a moment to refocus.")
 
     return {
